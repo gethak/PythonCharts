@@ -1,0 +1,186 @@
+import requests
+import pandas as pd
+from datetime import datetime
+import io # For handling CSV string from Alpha Vantage
+
+# API Keys provided by the user
+# The FMP API key is not used in this version as Alpha Vantage and EODHD cover the requests.
+# FMP_API_KEY = "lLvsgrawtPbAECTRUE2RNqC9hPdON0Sn" 
+EODHD_API_KEY = "681db8a12e23c2.81653924" 
+ALPHA_VANTAGE_API_KEY = "GM6X7O57LQFZ21G8"
+
+# Date Range
+START_DATE_STR = "2015-01-01"
+END_DATE_STR = datetime.today().strftime('%Y-%m-%d')
+
+# --- Brent Crude Oil (Alpha Vantage) ---
+def download_brent_crude_oil():
+    """
+    Downloads daily Brent Crude Oil prices from Alpha Vantage API
+    for the period 2015-01-01 to current date and saves to a CSV file.
+    """
+    print(f"Attempting to download Brent Crude Oil prices from Alpha Vantage (Period: {START_DATE_STR} to {END_DATE_STR})...")
+    
+    url = f"https://www.alphavantage.co/query?function=BRENT&interval=daily&apikey={ALPHA_VANTAGE_API_KEY}&datatype=csv"
+    
+    response_content = None 
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status() 
+        response_content = response.text
+        
+        csv_file_like_object = io.StringIO(response_content)
+        df = pd.read_csv(csv_file_like_object)
+        
+        if df.empty:
+            print("No data returned for Brent Crude Oil from Alpha Vantage. The CSV was empty.")
+            return
+
+        # **FIXED HERE:** Alpha Vantage CSV header is 'timestamp', 'value'
+        if 'timestamp' not in df.columns or 'value' not in df.columns:
+            print(f"Expected columns 'timestamp' and 'value' not found in Alpha Vantage Brent CSV.")
+            print(f"Available columns: {df.columns.tolist()}")
+            print(f"Response content (first 500 chars): {response_content[:500]}")
+            return
+            
+        df = df.rename(columns={'timestamp': 'Date', 'value': 'Price_USD_per_Barrel'})
+        
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        # Alpha Vantage sometimes returns '.' for missing values. to_numeric handles this with errors='coerce'.
+        df['Price_USD_per_Barrel'] = pd.to_numeric(df['Price_USD_per_Barrel'], errors='coerce')
+        
+        df = df.dropna(subset=['Date', 'Price_USD_per_Barrel'])
+
+        df = df[(df['Date'] >= pd.to_datetime(START_DATE_STR)) & (df['Date'] <= pd.to_datetime(END_DATE_STR))]
+        
+        df = df.sort_values(by='Date').reset_index(drop=True)
+        
+        if df.empty:
+            print(f"No Brent Crude Oil data found for the period {START_DATE_STR} to {END_DATE_STR} after processing.")
+            return
+
+        filename = f"brent_crude_oil_prices_{START_DATE_STR}_to_{END_DATE_STR}.csv"
+        df.to_csv(filename, index=False)
+        print(f"Successfully saved Brent Crude Oil prices to {filename}")
+        
+    except requests.exceptions.HTTPError as http_err:
+        print(f"HTTP error occurred while downloading Brent Crude Oil: {http_err}")
+        if response_content:
+            print(f"Response content (first 500 chars): {response_content[:500]}")
+    except requests.exceptions.ConnectionError as conn_err:
+        print(f"Connection error occurred while downloading Brent Crude Oil: {conn_err}")
+    except requests.exceptions.Timeout as timeout_err:
+        print(f"Timeout error occurred while downloading Brent Crude Oil: {timeout_err}")
+    except requests.exceptions.RequestException as req_err:
+        print(f"An error occurred during the request for Brent Crude Oil: {req_err}")
+        if response_content:
+             print(f"Response content (first 500 chars): {response_content[:500]}")
+    except pd.errors.EmptyDataError:
+        print("Empty CSV returned for Brent Crude Oil from Alpha Vantage. Nothing to parse.")
+    except KeyError as key_err: # Should be less likely with the direct check above
+        print(f"A key error occurred, likely due to unexpected CSV column names for Brent Crude Oil: {key_err}")
+        if response_content:
+             print(f"Response content (first 500 chars): {response_content[:500]}")
+    except Exception as e:
+        print(f"An unexpected error occurred with Brent Crude Oil download: {e}")
+        if response_content:
+             print(f"Response content (first 500 chars): {response_content[:500]}")
+
+# --- South African PPI (EODHD) ---
+def download_sa_ppi():
+    """
+    Downloads South African Producer Price Index (PPI) from EODHD API
+    for the period 2015-01-01 to current date and saves to a CSV file.
+    """
+    print(f"Attempting to download South African PPI from EODHD (Period: {START_DATE_STR} to {END_DATE_STR})...")
+    print("NOTE: If this step fails with a 403 Forbidden error, please verify your EODHD_API_KEY and its permissions.")
+    
+    indicator_code = "ZA_PRODUCER_PRICE_INDEX_2015_100" # This was an assumed code.
+    country_code = "ZA" 
+    
+    url = f"https://eodhistoricaldata.com/api/macro-indicator/{country_code}?api_token={EODHD_API_KEY}&indicator={indicator_code}&fmt=json"
+    
+    response_content = None
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        response_content = response.text
+
+        data = response.json() 
+        
+        if not data or not isinstance(data, list):
+            print(f"No data or unexpected format returned for SA PPI from EODHD.")
+            if data: print(f"Received: {str(data)[:500]}")
+            return
+
+        df = pd.DataFrame(data)
+        
+        if df.empty:
+            print("No data parsed into DataFrame for SA PPI from EODHD.")
+            return
+
+        if 'Date' not in df.columns or 'Value' not in df.columns:
+            print(f"Expected columns 'Date' and 'Value' not found in EODHD response for SA PPI.")
+            print(f"Available columns: {df.columns.tolist()}")
+            print(f"Sample data (first row): {df.head(1).to_dict(orient='records')}")
+            return
+            
+        df = df.rename(columns={'Value': 'PPI_Index_2015_100'})
+        
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df['PPI_Index_2015_100'] = pd.to_numeric(df['PPI_Index_2015_100'], errors='coerce')
+        
+        essential_columns = ['Date', 'PPI_Index_2015_100']
+        if 'Frequency' in df.columns: 
+            essential_columns.append('Frequency')
+        df = df[essential_columns].copy()
+        df = df.dropna(subset=['Date', 'PPI_Index_2015_100'])
+        
+        df = df[(df['Date'] >= pd.to_datetime(START_DATE_STR)) & (df['Date'] <= pd.to_datetime(END_DATE_STR))]
+        
+        df = df.sort_values(by='Date').reset_index(drop=True)
+
+        if df.empty:
+            print(f"No SA PPI data found for the period {START_DATE_STR} to {END_DATE_STR} after processing.")
+            return
+            
+        filename = f"south_african_ppi_{START_DATE_STR}_to_{END_DATE_STR}.csv"
+        df.to_csv(filename, index=False)
+        print(f"Successfully saved South African PPI data to {filename}")
+        
+    except requests.exceptions.HTTPError as http_err:
+        print(f"HTTP error occurred while downloading SA PPI: {http_err}")
+        print("This is often due to an invalid EODHD_API_KEY, insufficient permissions for the key, or an incorrect indicator code.")
+        if response_content:
+            print(f"Response content (first 500 chars): {response_content[:500]}")
+    except requests.exceptions.ConnectionError as conn_err:
+        print(f"Connection error occurred while downloading SA PPI: {conn_err}")
+    except requests.exceptions.Timeout as timeout_err:
+        print(f"Timeout error occurred while downloading SA PPI: {timeout_err}")
+    except requests.exceptions.RequestException as req_err:
+        print(f"An error occurred during the request for SA PPI: {req_err}")
+        if response_content:
+            print(f"Response content (first 500 chars): {response_content[:500]}")
+    except ValueError as json_err: 
+        print(f"Error decoding JSON for SA PPI: {json_err}")
+        if response_content:
+            print(f"Response content (first 500 chars): {response_content[:500]}")
+    except KeyError as key_err:
+        print(f"A key error occurred, likely due to unexpected JSON structure for SA PPI: {key_err}")
+        if response_content:
+            print(f"Response content (first 500 chars): {response_content[:500]}")
+    except Exception as e:
+        print(f"An unexpected error occurred with SA PPI download: {e}")
+        if response_content:
+            print(f"Response content (first 500 chars): {response_content[:500]}")
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    download_brent_crude_oil()
+    
+    print("\n" + "-" * 50 + "\n") 
+    
+    download_sa_ppi()
+    
+    print("\nScript finished.")
+
