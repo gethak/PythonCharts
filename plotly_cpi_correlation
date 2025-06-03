@@ -1,0 +1,223 @@
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import os
+
+def load_and_preprocess_data(filepath, date_column='Date', value_column_in_csv=None,
+                             output_value_column_name=None, resample_freq=None,
+                             date_format=None, multiply_value=None):
+    """
+    Loads data from a CSV file, processes the date column,
+    optionally multiplies values, resamples, and renames the value column.
+    """
+    if not os.path.exists(filepath):
+        print(f"Error: File not found at '{filepath}'")
+        return None
+    try:
+        df = pd.read_csv(filepath)
+    except pd.errors.EmptyDataError:
+        print(f"Error: File is empty at '{filepath}'")
+        return None
+    except Exception as e:
+        print(f"Error reading CSV '{filepath}': {e}")
+        return None
+
+    if date_column not in df.columns:
+        print(f"Error: Date column '{date_column}' not found in '{filepath}'")
+        return None
+    try:
+        df[date_column] = pd.to_datetime(df[date_column], format=date_format)
+    except ValueError as e:
+        print(f"Error converting date column in '{filepath}': {e}")
+        return None
+
+    df.set_index(date_column, inplace=True)
+
+    if value_column_in_csv:
+        if value_column_in_csv not in df.columns:
+            print(f"Error: Value column '{value_column_in_csv}' not found in '{filepath}'")
+            return None
+        current_values_series = df[value_column_in_csv]
+    else:
+        if len(df.columns) == 1:
+            current_values_series = df.iloc[:, 0]
+        else:
+            print(f"Error: 'value_column_in_csv' must be specified for '{filepath}' "
+                  "if it has multiple data columns or if the target column is not the only one.")
+            return None
+    
+    current_values_series = pd.to_numeric(current_values_series, errors='coerce')
+    if current_values_series.isnull().all():
+        print(f"Warning: Value column '{value_column_in_csv or 'first column'}' in '{filepath}' contains all NaNs after numeric conversion.")
+
+
+    if multiply_value is not None:
+        current_values_series = current_values_series * multiply_value
+    if resample_freq:
+        current_values_series = current_values_series.resample(resample_freq).mean()
+
+    final_col_name = output_value_column_name if output_value_column_name else current_values_series.name
+    if not final_col_name:
+        final_col_name = "Value"
+    return current_values_series.to_frame(name=final_col_name)
+
+# --- Configuration ---
+CPI_FILE = 'sa_cpi_monthly_yoy.csv'
+USD_ZAR_FILE = 'USD_ZAR Historical Data.csv'
+EUR_ZAR_FILE = 'EUR_ZAR Historical Data.csv'
+PPI_FILE = 'sa_ppi_data.csv'
+BRENT_OIL_FILE = 'brent_crude_oil_prices.csv'
+
+START_DATE = '2015-01-01'
+END_DATE = '2025-03-31'
+
+# --- Load and Prepare Data ---
+data_frames = {
+    "cpi": load_and_preprocess_data(
+        filepath=CPI_FILE, value_column_in_csv='CPI_YOY_Change', output_value_column_name='CPI_YOY_Change',
+        multiply_value=100
+    ),
+    "usd_zar": load_and_preprocess_data(
+        filepath=USD_ZAR_FILE, value_column_in_csv='Price', output_value_column_name='USD_ZAR',
+        date_format='%m/%d/%Y', resample_freq='ME'
+    ),
+    "eur_zar": load_and_preprocess_data(
+        filepath=EUR_ZAR_FILE, value_column_in_csv='Price', output_value_column_name='EUR_ZAR',
+        date_format='%m/%d/%Y', resample_freq='ME'
+    ),
+    "ppi": load_and_preprocess_data(
+        filepath=PPI_FILE, date_column='Data_Date', value_column_in_csv='Actual_Percent',
+        output_value_column_name='PPI_Actual_Percent'
+    ),
+    "brent_oil": load_and_preprocess_data(
+        filepath=BRENT_OIL_FILE, date_column='Date', value_column_in_csv='Price_USD_per_Barrel',
+        output_value_column_name='Brent_Oil_USD', resample_freq='ME'
+    )
+}
+
+if any(df is None for df in data_frames.values()):
+    print("One or more data files could not be loaded or processed. Exiting.")
+    exit()
+
+filtered_dfs = {}
+for name, df in data_frames.items():
+    df.sort_index(inplace=True)
+    filtered_dfs[name] = df.loc[START_DATE:END_DATE].copy()
+
+# --- Plotting with Plotly ---
+fig = go.Figure()
+
+# Define colors for consistency
+color_usd_zar = 'deepskyblue'
+color_eur_zar = 'mediumseagreen'
+color_brent = 'saddlebrown'
+color_cpi = 'salmon'
+color_ppi = 'darkviolet'
+
+# Add USD/ZAR trace (Y-axis 1 - default left)
+fig.add_trace(go.Scatter(
+    x=filtered_dfs["usd_zar"].index,
+    y=filtered_dfs["usd_zar"]['USD_ZAR'],
+    name='USD/ZAR Rate',
+    line=dict(color=color_usd_zar, width=2, dash='dot'), 
+    yaxis='y1'
+))
+
+# Add EUR/ZAR trace (Y-axis 2 - right)
+fig.add_trace(go.Scatter(
+    x=filtered_dfs["eur_zar"].index,
+    y=filtered_dfs["eur_zar"]['EUR_ZAR'],
+    name='EUR/ZAR Rate',
+    line=dict(color=color_eur_zar, width=2, dash='dot'),
+    yaxis='y2'
+))
+
+# Add Brent Crude Oil trace (Y-axis 3 - right)
+fig.add_trace(go.Scatter(
+    x=filtered_dfs["brent_oil"].index,
+    y=filtered_dfs["brent_oil"]['Brent_Oil_USD'],
+    name='Brent Crude Oil (USD/Barrel)',
+    line=dict(color=color_brent, width=2.5),
+    yaxis='y3'
+))
+
+# Add CPI trace (Y-axis 4 - right)
+fig.add_trace(go.Scatter(
+    x=filtered_dfs["cpi"].index,
+    y=filtered_dfs["cpi"]['CPI_YOY_Change'],
+    name='SA CPI YoY Change (%)',
+    line=dict(color=color_cpi, width=2, ),
+    yaxis='y4'
+))
+
+# Add PPI trace (Y-axis 4 - right)
+fig.add_trace(go.Scatter(
+    x=filtered_dfs["ppi"].index,
+    y=filtered_dfs["ppi"]['PPI_Actual_Percent'],
+    name='SA PPI Actual Change (%)',
+    line=dict(color=color_ppi, width=2, dash='dot'),
+    yaxis='y4' # Shares Y4 with CPI
+))
+
+# --- Configure Layout with Multiple Y-Axes ---
+fig.update_layout(
+    title=dict(
+        text='South African Economic Indicators (Jan 2015 - Mar 2025)',
+        x=0.5, # Center title
+        font=dict(size=20)
+    ),
+    xaxis=dict(
+        title='Date',
+        domain=[0.05, 0.80] # Adjust domain to make space for multiple y-axes on the right
+    ),
+    yaxis=dict(
+        title=dict(text='USD/ZAR Rate', font=dict(color=color_usd_zar, size=14)), # Corrected
+        tickfont=dict(color=color_usd_zar, size=12),
+        side='left',
+    ),
+    yaxis2=dict(
+        title=dict(text='EUR/ZAR Rate', font=dict(color=color_eur_zar, size=14)), # Corrected
+        tickfont=dict(color=color_eur_zar, size=12),
+        anchor='x',
+        overlaying='y',
+        side='right'
+    ),
+    yaxis3=dict(
+        title=dict(text='Brent Oil (USD/Barrel)', font=dict(color=color_brent, size=14)), # Corrected
+        tickfont=dict(color=color_brent, size=12),
+        anchor='free',
+        overlaying='y',
+        side='right',
+        position=0.90
+    ),
+    yaxis4=dict(
+        title=dict(text='Inflation/PPI Change (%)', font=dict(color='black', size=14)), # Corrected
+        tickfont=dict(color='black', size=12),
+        anchor='free',
+        overlaying='y',
+        side='right',
+        position=0.98
+    ),
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="right",
+        x=1
+    ),
+    hovermode='x unified',
+    autosize=True,
+    margin=dict(l=80, r=200, t=100, b=80)
+)
+
+
+# --- Save and Show Plot ---
+output_html_filename = 'economic_indicators_interactive_plot.html'
+try:
+    fig.write_html(output_html_filename)
+    print(f"Interactive plot saved successfully to '{output_html_filename}'")
+    # fig.show() # Uncomment to display the plot in a browser if running locally
+except Exception as e:
+    print(f"Error saving interactive plot: {e}")
+
+print("Script finished.")

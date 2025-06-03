@@ -57,7 +57,6 @@ def load_and_preprocess_data(filepath, date_column='Date', value_column_in_csv=N
             return None
         current_values_series = df[value_column_in_csv]
     else:
-        # If not specified, assume it's the first (and ideally only) data column
         if len(df.columns) == 1:
             current_values_series = df.iloc[:, 0]
         else:
@@ -65,19 +64,14 @@ def load_and_preprocess_data(filepath, date_column='Date', value_column_in_csv=N
                   "if it has multiple data columns or if the target column is not the only one.")
             return None
     
-    # Ensure the series is numeric, coercing errors to NaN
     current_values_series = pd.to_numeric(current_values_series, errors='coerce')
 
-
-    # Apply multiplication if specified
     if multiply_value is not None:
         current_values_series = current_values_series * multiply_value
 
-    # Resample if specified
     if resample_freq:
         current_values_series = current_values_series.resample(resample_freq).mean()
 
-    # Determine final output column name
     final_col_name = output_value_column_name if output_value_column_name else current_values_series.name
     if not final_col_name:
         final_col_name = "Value"
@@ -92,116 +86,102 @@ PPI_FILE = 'sa_ppi_data.csv'
 BRENT_OIL_FILE = 'brent_crude_oil_prices.csv'
 
 START_DATE = '2015-01-01'
-END_DATE = '2025-03-31' # Ensure this aligns with your data availability
+END_DATE = '2025-03-31'
 
 # --- Load and Prepare Data ---
 cpi_df = load_and_preprocess_data(
-    filepath=CPI_FILE,
-    value_column_in_csv='CPI_YOY_Change',
-    output_value_column_name='CPI_YOY_Change',
-    resample_freq=None,
+    filepath=CPI_FILE, value_column_in_csv='CPI_YOY_Change', output_value_column_name='CPI_YOY_Change',
     multiply_value=100
 )
-
 usd_zar_monthly = load_and_preprocess_data(
-    filepath=USD_ZAR_FILE,
-    value_column_in_csv='Price',
-    output_value_column_name='USD_ZAR',
-    date_format='%m/%d/%Y',
-    resample_freq='ME'
+    filepath=USD_ZAR_FILE, value_column_in_csv='Price', output_value_column_name='USD_ZAR',
+    date_format='%m/%d/%Y', resample_freq='ME'
 )
-
 eur_zar_monthly = load_and_preprocess_data(
-    filepath=EUR_ZAR_FILE,
-    value_column_in_csv='Price',
-    output_value_column_name='EUR_ZAR',
-    date_format='%m/%d/%Y',
-    resample_freq='ME'
+    filepath=EUR_ZAR_FILE, value_column_in_csv='Price', output_value_column_name='EUR_ZAR',
+    date_format='%m/%d/%Y', resample_freq='ME'
 )
-
 ppi_df = load_and_preprocess_data(
-    filepath=PPI_FILE,
-    date_column='Data_Date',
-    value_column_in_csv='Actual_Percent',
-    output_value_column_name='PPI_Actual_Percent',
-    resample_freq=None,
-    date_format=None,
-    multiply_value=None
+    filepath=PPI_FILE, date_column='Data_Date', value_column_in_csv='Actual_Percent',
+    output_value_column_name='PPI_Actual_Percent'
 )
-
 brent_oil_df = load_and_preprocess_data(
-    filepath=BRENT_OIL_FILE,
-    date_column='Date',
-    value_column_in_csv='Price_USD_per_Barrel',
-    output_value_column_name='Brent_Oil_USD',
-    resample_freq='ME', # Resample daily oil prices to monthly average
-    date_format=None, # Pandas should infer YYYY-MM-DD
-    multiply_value=None
+    filepath=BRENT_OIL_FILE, date_column='Date', value_column_in_csv='Price_USD_per_Barrel',
+    output_value_column_name='Brent_Oil_USD', resample_freq='ME'
 )
 
-# Exit if any essential DataFrame failed to load
-if cpi_df is None or usd_zar_monthly is None or eur_zar_monthly is None or \
-   ppi_df is None or brent_oil_df is None:
+if not all([df is not None for df in [cpi_df, usd_zar_monthly, eur_zar_monthly, ppi_df, brent_oil_df]]):
     print("One or more data files could not be loaded or processed. Exiting.")
     exit()
 
-# --- Sort DataFrames by index to ensure they are monotonic (important for .loc slicing) ---
-if cpi_df is not None: cpi_df.sort_index(inplace=True)
-if usd_zar_monthly is not None: usd_zar_monthly.sort_index(inplace=True)
-if eur_zar_monthly is not None: eur_zar_monthly.sort_index(inplace=True)
-if ppi_df is not None: ppi_df.sort_index(inplace=True)
-if brent_oil_df is not None: brent_oil_df.sort_index(inplace=True)
+for df in [cpi_df, usd_zar_monthly, eur_zar_monthly, ppi_df, brent_oil_df]:
+    df.sort_index(inplace=True)
 
-
-# Filter data to the common time range
 cpi_df_filtered = cpi_df.loc[START_DATE:END_DATE]
 usd_zar_filtered = usd_zar_monthly.loc[START_DATE:END_DATE]
 eur_zar_filtered = eur_zar_monthly.loc[START_DATE:END_DATE]
 ppi_df_filtered = ppi_df.loc[START_DATE:END_DATE]
 brent_oil_filtered = brent_oil_df.loc[START_DATE:END_DATE]
 
-
 # --- Plotting ---
 plt.style.use('seaborn-v0_8-darkgrid')
+fig, ax1 = plt.subplots(figsize=(20, 10)) # Increased figure size
 
-fig, ax1 = plt.subplots(figsize=(18, 9)) # Adjusted figure size for more data
+# Axis 1: USD/ZAR (Leftmost)
+color_usd_zar = 'deepskyblue'
+line1, = ax1.plot(usd_zar_filtered.index, usd_zar_filtered['USD_ZAR'], color=color_usd_zar, linestyle='-', linewidth=2, label='USD/ZAR Exchange Rate')
+ax1.set_xlabel('Date', fontsize=14)
+ax1.set_ylabel('USD/ZAR Rate', color=color_usd_zar, fontsize=14)
+ax1.tick_params(axis='y', labelcolor=color_usd_zar, labelsize=12)
+ax1.tick_params(axis='x', labelsize=12, rotation=45)
+ax1.grid(True, which='major', linestyle=':', linewidth=0.5, alpha=0.7) # More subtle grid for primary
 
-# Plot Exchange Rates and Oil Price on the left y-axis
-line1, = ax1.plot(usd_zar_filtered.index, usd_zar_filtered['USD_ZAR'], color='deepskyblue', linestyle='-', linewidth=2, label='USD/ZAR Exchange Rate')
-line2, = ax1.plot(eur_zar_filtered.index, eur_zar_filtered['EUR_ZAR'], color='mediumseagreen', linestyle='--', linewidth=2, label='EUR/ZAR Exchange Rate')
-line5, = ax1.plot(brent_oil_filtered.index, brent_oil_filtered['Brent_Oil_USD'], color='saddlebrown', linestyle=':', linewidth=2.5, label='Brent Crude Oil (USD/Barrel)') # New Brent Oil line
+# Axis 2: EUR/ZAR (Right, offset 1)
+ax_eur = ax1.twinx()
+color_eur_zar = 'mediumseagreen'
+line2, = ax_eur.plot(eur_zar_filtered.index, eur_zar_filtered['EUR_ZAR'], color=color_eur_zar, linestyle='--', linewidth=2, label='EUR/ZAR Exchange Rate')
+ax_eur.set_ylabel('EUR/ZAR Rate', color=color_eur_zar, fontsize=14)
+ax_eur.tick_params(axis='y', labelcolor=color_eur_zar, labelsize=12)
+ax_eur.spines["right"].set_position(("outward", 0)) # Position at the default right
+ax_eur.grid(False)
 
-ax1.set_xlabel('Date', fontsize=12)
-ax1.set_ylabel('Exchange Rate / Oil Price (USD)', color='black', fontsize=12) # Updated label
-ax1.tick_params(axis='y', labelcolor='black', labelsize=10)
-ax1.tick_params(axis='x', labelsize=10, rotation=45)
-ax1.grid(True, which='major', linestyle='--', linewidth=0.5, alpha=0.7)
+# Axis 3: Brent Crude Oil (Right, offset 2)
+ax_oil = ax1.twinx()
+color_brent = 'saddlebrown'
+line5, = ax_oil.plot(brent_oil_filtered.index, brent_oil_filtered['Brent_Oil_USD'], color=color_brent, linestyle=':', linewidth=2.5, label='Brent Crude Oil (USD/Barrel)')
+ax_oil.set_ylabel('Brent Oil (USD/Barrel)', color=color_brent, fontsize=14)
+ax_oil.tick_params(axis='y', labelcolor=color_brent, labelsize=12)
+ax_oil.spines["right"].set_position(("outward", 60)) # Offset further to the right
+ax_oil.grid(False)
 
+# Axis 4: CPI and PPI (Right, offset 3 - furthest)
+ax_inflation = ax1.twinx()
+color_cpi = 'salmon'
+color_ppi = 'darkviolet'
+line3, = ax_inflation.plot(cpi_df_filtered.index, cpi_df_filtered['CPI_YOY_Change'], color=color_cpi, linestyle=':', linewidth=2, alpha=0.8, label='SA CPI YoY Change (%)')
+line4, = ax_inflation.plot(ppi_df_filtered.index, ppi_df_filtered['PPI_Actual_Percent'], color=color_ppi, linestyle='-.', linewidth=2, alpha=0.8, label='SA PPI Actual Change (%)')
+ax_inflation.set_ylabel('Inflation/PPI Change (%)', color='black', fontsize=14) # General label
+ax_inflation.tick_params(axis='y', labelcolor='black', labelsize=12)
+ax_inflation.spines["right"].set_position(("outward", 120)) # Offset even further
+ax_inflation.grid(False)
+
+
+# X-axis formatting (apply to ax1 as it's the base)
 ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-ax1.xaxis.set_major_locator(mdates.YearLocator(1))
-ax1.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=range(1,13,3)))
-
-# Create a second y-axis for CPI and PPI data
-ax2 = ax1.twinx()
-line3, = ax2.plot(cpi_df_filtered.index, cpi_df_filtered['CPI_YOY_Change'], color='salmon', linestyle=':', linewidth=2.5, label='SA CPI YoY Change (%)')
-line4, = ax2.plot(ppi_df_filtered.index, ppi_df_filtered['PPI_Actual_Percent'], color='darkviolet', linestyle='-.', linewidth=2.5, label='SA PPI Actual Change (%)')
-
-ax2.set_ylabel('Inflation / Producer Price Index Change (%)', color='black', fontsize=12)
-ax2.tick_params(axis='y', labelcolor='black', labelsize=10)
-ax2.grid(False)
+ax1.xaxis.set_major_locator(mdates.YearLocator(2)) # Major tick every 2 years for less clutter
+ax1.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[1,7])) # Minor ticks for Jan, Jul
 
 # --- Title and Legend ---
-plt.title('South African Economic Indicators: CPI, PPI, Oil & Key Exchange Rates (Jan 2015 - Mar 2025)', fontsize=16, pad=20)
+plt.title('South African Economic Indicators (Jan 2015 - Mar 2025)', fontsize=18, pad=25)
 
-handles = [line1, line2, line5, line3, line4] # Added line5 for Brent Oil, reordered for clarity
+handles = [line1, line2, line5, line3, line4]
 labels = [h.get_label() for h in handles]
-# Adjust ncol and bbox_to_anchor if needed for 5 items
-fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.1), ncol=3, fontsize=10, frameon=True, bbox_transform=fig.transFigure)
+fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.12), ncol=3, fontsize=12, frameon=True, bbox_transform=fig.transFigure)
 
-fig.subplots_adjust(bottom=0.25) # Adjusted for potentially taller legend
+fig.subplots_adjust(left=0.08, right=0.75, bottom=0.25, top=0.9) # Adjust spacing
 
 # --- Save and Close Plot ---
-output_filename = 'economic_indicators_plot_with_oil.png'
+output_filename = 'economic_indicators_multi_axis_plot.png'
 try:
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
     print(f"Plot saved successfully to '{output_filename}'")
